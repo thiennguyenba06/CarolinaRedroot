@@ -129,4 +129,7 @@ else:
 
 for image in images_list:
   image_path = parent_directory + image_folder + image
+  if (float(Image.open(image_path).getxmp()['xmpmeta']['RDF']['Description']['GimbalPitchDegree']) > -50):
+    print("skipped image: " + image)
+    continue
   divideImage(parent_directory, image_path, 640, iou_thresh, conf_thresh)

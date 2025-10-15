@@ -76,27 +76,6 @@ weight_path = "./best.pt"
 image_folder = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
 
 print("split_predict script")
-# uncomment this part to use custom paths
-# print("Enter full path to parent_directory ")
-# answer = input()
-# if(answer == "-1"):
-#     print(f"path: {dataset_path}")
-# else:
-#     dataset_path = answer + "/"
-
-# print("Enter relative image folder or enter -1 to use default path using / [ex)images/]: ", end=" ")
-# answer = input()
-# if(answer == "-1"):
-#     print(f"path: {image_folder}")
-# else:
-#     image_folder = answer + "/"
-
-# print("Enter relative path to the weight file or enter -1 to use default path[ex) C:/Users/Duwon/Downloads/CRData/best.pt]: ", end=" ")
-# answer = input()
-# if(answer == "-1"):
-#     print(f"path: {weight_path}")
-# else:
-#     weight_path = answer
 
 print("Enter the iou threshhold to use [ex) 0.5]: ", end=" ")
 # iou_thresh = float(input())
