@@ -127,12 +127,12 @@ def georef(img_path, label_path):
                 gps_list.append([x, y])
 
                 # Calculate x, y where y-axis is noth.
-                # theta = -1.0 * yaw * math.pi / 180
-                # x = x * math.cos(theta) + y * math.sin(theta)
-                # y = -1.0 * x * math.sin(theta) + y * math.cos(theta)
+                theta = -1.0 * yaw * math.pi / 180
+                x = x * math.cos(theta) + y * math.sin(theta)
+                y = -1.0 * x * math.sin(theta) + y * math.cos(theta)
 
-                # lat, long = leaf_gps(x, y, latitude, longitude, altitude)
-                # gps_list.append([lat, long])
+                lat, long = leaf_gps(x, y, latitude, longitude, altitude)
+                gps_list.append([lat, long])
     return gps_list
 
 # print("compile successfully")
