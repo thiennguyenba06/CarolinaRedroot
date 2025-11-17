@@ -4,6 +4,7 @@
 # for image folder name copy relative path and add / at the end
 # for weight path copy relative path
 # image folder and weight path are then concatenated to the directory path
+# .txt files contain relative coordinates of boxes rounding detected objects in the images
 
 
 # parameters
@@ -16,6 +17,8 @@ import cv2
 import numpy as np
 from PIL import Image
 from pathlib import Path
+
+
 
 def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_thresh=0.35):
   image_f = Image.open(image_path)
@@ -61,7 +64,7 @@ def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_
       w, h = x, y
       with open(parent_directory + "output/" + image[:-4] + ".txt", "a") as f:
         for box in boxes:
-          line = f"0 {box[0][0]/w} {box[0][1]/h} {box[1][0]/w} {box[1][1]/h} {box[2][0]/w} {box[2][1]/h} {box[3][0]/w} {box[3][1]/h}"
+          line = f"0 {(box[0][0] + start_i)/w} {(box[0][1] + start_j)/h} {(box[1][0] + start_i)/w} {(box[1][1] + start_j)/h} {(box[2][0] + start_i)/w} {(box[2][1] + start_j)/h} {(box[3][0] + start_i)/w} {(box[3][1] + start_j)/h}"
           print(line, file = f)
           pts = [[box[0][0] + start_i,box[0][1] + start_j], [box[1][0] + start_i,box[1][1] + start_j], [box[2][0] + start_i,box[2][1] + start_j], [box[3][0] + start_i,box[3][1] + start_j]]
           cv2.polylines(image_f, np.int32([pts]), True, (0,0,255), 1)
@@ -71,18 +74,19 @@ def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_
 
 
 
-dataset_path = "./" #default path
-weight_path = "./best.pt"
+
+dataset_path = "./" # current directory
+weight_path = "best.pt" # params for model
 image_folder = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
 
 print("split_predict script")
 
-print("Enter the iou threshhold to use [ex) 0.5]: ", end=" ")
-# iou_thresh = float(input())
+# print("Enter the iou threshhold to use [ex) 0.5]: ", end=" ")
+# # iou_thresh = float(input())
 iou_thresh = 0.5
 
-print("Enter the confidence threshhold to use [ex) 0.35]: ", end=" ")
-# conf_thresh = float(input())
+# print("Enter the confidence threshhold to use [ex) 0.35]: ", end=" ")
+# # conf_thresh = float(input())
 conf_thresh = 0.35
 
 #Change directory to dataset directory
