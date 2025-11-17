@@ -61,7 +61,7 @@ def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_
       w, h = x, y
       with open(parent_directory + "output/" + image[:-4] + ".txt", "a") as f:
         for box in boxes:
-          line = f"0 {box[0][0]/w} {box[0][1]/h} {box[1][0]/w} {box[1][1]/h} {box[2][0]/w} {box[2][1]/h} {box[3][0]/w} {box[3][1]/h}"
+          line = f"0 {(box[0][0] + start_i)/w} {(box[0][1] + start_j)/h} {(box[1][0] + start_i)/w} {(box[1][1] + start_j)/h} {(box[2][0] + start_i)/w} {(box[2][1] + start_j)/h} {(box[3][0] + start_i)/w} {(box[3][1] + start_j)/h}"
           print(line, file = f)
           pts = [[box[0][0] + start_i,box[0][1] + start_j], [box[1][0] + start_i,box[1][1] + start_j], [box[2][0] + start_i,box[2][1] + start_j], [box[3][0] + start_i,box[3][1] + start_j]]
           cv2.polylines(image_f, np.int32([pts]), True, (0,0,255), 1)
