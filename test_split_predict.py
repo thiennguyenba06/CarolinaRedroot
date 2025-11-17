@@ -76,7 +76,7 @@ def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_
 
 
 dataset_path = "./" # current directory
-weight_path = "best.pt" # params for model
+weight_path = "best.pt" # model's weights
 image_folder = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
 
 print("split_predict script")

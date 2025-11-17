@@ -124,18 +124,24 @@ def georef(img_path, label_path):
                 # Only find the gps coordinates of the 1st corner
                 # image coordinates to real life coordinates (relative distance from the drone/camera)
                 x, y = find_x_y(width, height, 55.07, box[0][0] * width, box[0][1] * height, -1.0 * pitch, drone_height)
+                gps_list.append([x, y])
 
                 # Calculate x, y where y-axis is noth.
-                theta = -1.0 * yaw * math.pi / 180
-                x = x * math.cos(theta) + y * math.sin(theta)
-                y = -1.0 * x * math.sin(theta) + y * math.cos(theta)
+                # theta = -1.0 * yaw * math.pi / 180
+                # x = x * math.cos(theta) + y * math.sin(theta)
+                # y = -1.0 * x * math.sin(theta) + y * math.cos(theta)
 
-                lat, long = leaf_gps(x, y, latitude, longitude, altitude)
-                gps_list.append([lat, long])
+                # lat, long = leaf_gps(x, y, latitude, longitude, altitude)
+                # gps_list.append([lat, long])
     return gps_list
 
-print("compile successfully")
+# print("compile successfully")
 
-print("test")
-gps_list = georef("DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808144123_0060_D_Waypoint60.JPG", "output/DJI_20250808144123_0060_D_Waypoint60.txt")
-print(gps_list)
+# gps_list = georef("DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143611_0002_D_Waypoint2.JPG", "output/DJI_20250808143611_0002_D_Waypoint2.txt")
+# # print(gps_list)
+# with open("./gps_output.txt", "w") as f:
+#     for gps in gps_list:
+#         to_write = str(gps[0]) + ", " + str(gps[1]) + "\n"
+#         f.write(to_write)
+
+# print(find_x_y(5280, 3956, 55.07, 5280/2, 0, 60, 3))
