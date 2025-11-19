@@ -88,7 +88,8 @@ def get_detections_coor(img_path, detections_path):
     return: list of (x,y) coordinates in meters relative to drone position
     """
     img = pyexiv2.Image(img_path)
-    exif = img.read_exif()
+    gps = float(img.read_xmp()['Xmp.drone-dji.GpsLatitude']), float(img.read_xmp()['Xmp.drone-dji.GpsLongitude'])
+    ecef_list = GPS_to_Cartesian(gps)
     img_width = float(img.read_exif()['Exif.Photo.PixelXDimension'])
     print("img width: ", img_width)
     img_height = float(img.read_exif()['Exif.Photo.PixelYDimension'])
@@ -104,22 +105,80 @@ def get_detections_coor(img_path, detections_path):
             # print(box[0][0])
             coor = find_center(box, img_width, img_height)
             x, y = find_point_projection(coor, img_width, img_height, 3, np.radians(-60))
+            x = x + ecef_list[0] 
+            y = y + ecef_list[1] 
             # print(coor)
             coor_list.append([x, y])
     return np.array(coor_list)
 
             
-def map_to_origin(new_origin, old_origin, detections_txt):
+def map_to_base(origin_img_path, coor_list):
     """
     Map all detection coordinates to a new origin
     param origin: (x,y) coordinates of the new origin
     param detections_txt: path to the detection txt file
     return: list of (x,y) coordinates in meters relative to new origin
     """
+    coor_list_to_base = []
+    xmp_data = pyexiv2.Image(origin_img_path).read_xmp()
+    gps = (float(xmp_data["Xmp.drone-dji.GpsLatitude"]), float(xmp_data["Xmp.drone-dji.GpsLongitude"]))
+    cart_origin = GPS_to_Cartesian(gps)
+    for coor in coor_list:
+        vector = [coor[0] - cart_origin[0], coor[1] - cart_origin[1]]
+        coor_list_to_base.append(vector)
+    return coor_list_to_base
+
+
+def find_basis(path1, path2):
+    img1 = pyexiv2.Image(path1)
+    img2 = pyexiv2.Image(path2)
+    gps1 = float(img1.read_xmp()['Xmp.drone-dji.GpsLatitude']), float(img1.read_xmp()['Xmp.drone-dji.GpsLongitude'])
+    gps2 = float(img2.read_xmp()['Xmp.drone-dji.GpsLatitude']), float(img2.read_xmp()['Xmp.drone-dji.GpsLongitude'])
+    cart1 = GPS_to_Cartesian(gps1)
+    cart2 = GPS_to_Cartesian(gps2)
+    e2_ecef = np.array([cart2[0]-cart1[0], cart2[1]-cart1[1]])
+    e1_ecef = np.array([-e2_ecef[1], e2_ecef[0]])
+    # print(vector * e1)
+    print("e2", e2_ecef)
+    print("e1", e1_ecef)
+    return e1_ecef, e2_ecef
+
+def find_rotate_angle(basis):
+    vector = np.array([0,3])
+    return np.arccos(np.dot(basis[1], vector)/(np.linalg.norm(basis[1])*np.linalg.norm(vector)))
+
+
+def rotate(rotate_angle, vector):
+    a11 = np.cos(rotate_angle)
+    a12 = -np.sin(rotate_angle)
+    a21 = np.sin(rotate_angle)
+    a22 = np.cos(rotate_angle)
+    A = np.array([[a11, a12], [a21, a22]])
+    rotated_vec = np.dot(A, vector)
+    return rotated_vec
+
+
+
+def georef(origin_path, forward_dir_path, img_path, label_path):
+    coor_list = get_detections_coor(img_path, label_path)
+    mapped_coor_list = map_to_base(origin_path, coor_list)
+    basis = find_basis(origin_path, forward_dir_path)
+    angle = find_rotate_angle(basis)
+    rel_coor_list = []
+    for coor in mapped_coor_list:
+        rel_coor_list.append(rotate(angle, coor))
+    return rel_coor_list 
     
 
-    
 
-# print(find_point_projection((0, 0), 5280, 3956, 3, np.radians(-60)))
-# print(find_point_projection((0, -3956/2), 5280, 3956, 3, np.radians(-60)))
-# print(find_point_projection((0, 3956/2), 5280, 3956, 3, np.radians(-60)))
+ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
+FORWARD_DIR_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143611_0002_D_Waypoint2.JPG"
+img_path = FORWARD_DIR_PATH
+label_path = "output/DJI_20250808143611_0002_D_Waypoint2.txt"
+
+mapped_list = georef(ORIGIN_PATH, FORWARD_DIR_PATH, img_path, label_path)
+# print(gps_list)
+with open("./mapped_output.txt", "w") as f:
+    for mapped in mapped_list:
+        to_write = str(mapped[0]) + ", " + str(mapped[1]) + "\n"
+        f.write(to_write)
