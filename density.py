@@ -9,9 +9,9 @@ from collections import defaultdict
 import math
 
 # Inputs
-# image_corners_file = input("Enter path to image corners file: ").strip()
-# detection_folder = input("Enter path to detection files folder: ").strip()
-# side_length_meters = float(input("Enter desired grid square side length (in meters): ").strip())
+image_corners_file = input("Enter path to image corners file: ").strip()
+detection_folder = input("Enter path to detection files folder: ").strip()
+side_length_meters = float(input("Enter desired grid square side length (in meters): ").strip())
 
 heatmap_image = "gps_field_density_heatmap.png"
 geotiff_output = "gps_density_map.tif"

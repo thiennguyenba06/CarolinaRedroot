@@ -20,6 +20,7 @@ def find_angles(height, angle_y, x_coord, y_coord):
     DO = height / 2 / math.tan(angle_y / 2)
     BO = math.sqrt(DO * DO + y_coord * y_coord)
     theta_x = math.atan(x_coord / BO) * 180 / math.pi
+    # print(np.radians(theta_x))
     theta_y = math.atan(y_coord / DO) * 180 / math.pi
     ###Calculate verticle angle of view and print###
     temp = 5280 / 2 / DO
@@ -135,13 +136,13 @@ def georef(img_path, label_path):
                 gps_list.append([lat, long])
     return gps_list
 
-print("compile successfully")
+# print("compile successfully")
 
-gps_list = georef("DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143611_0002_D_Waypoint2.JPG", "output/DJI_20250808143611_0002_D_Waypoint2.txt")
-# print(gps_list)
-with open("./gps_output.txt", "w") as f:
-    for gps in gps_list:
-        to_write = str(gps[0]) + ", " + str(gps[1]) + "\n"
-        f.write(to_write)
+# gps_list = georef("DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143611_0002_D_Waypoint2.JPG", "output/DJI_20250808143611_0002_D_Waypoint2.txt")
+# # print(gps_list)
+# with open("./gps_output.txt", "w") as f:
+#     for gps in gps_list:
+#         to_write = str(gps[0]) + ", " + str(gps[1]) + "\n"
+#         f.write(to_write)
 
 # print(find_x_y(5280, 3956, 55.07, 5280/2, 0, 60, 3))
