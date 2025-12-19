@@ -40,6 +40,7 @@ print("______________________")
 
 # mapping detections to relative coordinate with drone's first image as basis
 # y direction is drone's forward direction
+# x direction is always orthogonal to y direction to the right
 detections = {} # image_id -> list of (x,y) detections in relative coordinate system
 for img, label in zip(img_list, label_list):
     img_path = os.path.join(IMG_DIR, img)
@@ -86,12 +87,50 @@ point_cell_map = {} # (x,y) point -> image to avoid doulbe counting
 
 # create grid lines
 y_lines = np.linspace(start=y_min, stop=y_max, num=num_y_cells+1)
-if abs(x_min) > abs(x_max):
-    x_lines = np.linspace(start=x_max, stop=x_min, num=num_x_cells+1)
-else:
-    x_lines = np.linspace(start=x_min, stop=x_max, num=num_x_cells+1)
-all_detections_coor_copy = all_detections_coor.copy()
+
+x_lines = np.linspace(start=x_max, stop=x_min, num=num_x_cells+1)
+
+
 # populate density grid
+# helper functions
+def cell_center(x_idx, y_idx):
+    x = (x_lines[x_idx] + x_lines[x_idx + 1]) / 2
+    y = (y_lines[y_idx] + y_lines[y_idx + 1]) / 2
+    return x, y
+
+def read_gps(image_path):
+    with pyexiv2.Image(image_path) as img:
+        meta = img.read_xmp()
+        lat = float(meta['Xmp.drone-dji.GpsLatitude'])
+        lon = float(meta['Xmp.drone-dji.GpsLongitude'])
+    return lat, lon
+
+def meters_to_gps(lat_origin, lon_origin, dx, dy):
+    """
+    Approximates new GPS coordinates given an origin and metric offsets (dx, dy).
+    Uses a flat-earth approximation suitable for small drone survey areas.
+    """
+    R_EARTH = 6378137.0  # Earth radius in meters
+    
+    # Calculate change in latitude
+    d_lat = (dy / R_EARTH) * (180 / np.pi)
+    new_lat = lat_origin + d_lat
+    
+    # Calculate change in longitude (adjusted for latitude)
+    d_lon = (dx / (R_EARTH * np.cos(np.radians(lat_origin)))) * (180 / np.pi)
+    new_lon = lon_origin + d_lon
+    
+    return (new_lat, new_lon)
+
+# origin GPS coor
+lat0, lon0 = read_gps(ORIGIN_PATH)
+print(f"Origin GPS: lat {lat0}, lon {lon0}")
+
+
+gps_map = {}
+lat0, lon0 = read_gps(ORIGIN_PATH)
+
+
 for y_idx in range(num_y_cells):
     for x_idx in range(num_x_cells):
         up = y_lines[y_idx+1]
@@ -114,9 +153,20 @@ for y_idx in range(num_y_cells):
         density_grid[y_idx, x_idx] = most_count
         if chosen_image is not None:
             point_cell_map[(x_idx, y_idx)] = chosen_image
+            # map cell center to GPS
+            cell_center_x = (left + right) / 2
+            cell_center_y = (down + up) / 2
+            gps = meters_to_gps(lat0, lon0, cell_center_x, cell_center_y)
+            gps_map[gps] = most_count
+        
 
 # output
 print("Total images with detections:", len(image_bounds))
 print("Total detection files loaded:", len(detections))
 print("Nonzero grid cells:", np.count_nonzero(density_grid))
 print("Max density in a cell: ", np.max(density_grid))
+
+with open("gps_density_dict.txt", "w") as f:
+    for k, v in gps_map.items():
+        f.write(f"{k}: {v}\n" + "\n")
+    f.close()
