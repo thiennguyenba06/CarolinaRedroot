@@ -77,8 +77,9 @@ def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_
 
 dataset_path = "./" # set to current directory
 weight_path = "best.pt" # set to model's weights
-image_folder = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
+# image_folder = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
 
+image_folder = "DJI_202507011146_136_PineIslandbog9H3m3x3photo/"
 print("split_predict script")
 
 # print("Enter the iou threshhold to use [ex) 0.5]: ", end=" ")
@@ -112,7 +113,7 @@ else:
 
 for image in images_list:
   image_path = parent_directory + image_folder + image
-  if (float(Image.open(image_path).getxmp()['xmpmeta']['RDF']['Description']['GimbalPitchDegree']) > -50):
-    print("skipped image: " + image)
-    continue
+  # if (float(Image.open(image_path).getxmp()['xmpmeta']['RDF']['Description']['GimbalPitchDegree']) > -50):
+  #   print("skipped image: " + image)
+  #   continue
   divideImage(parent_directory, image_path, 640, iou_thresh, conf_thresh)

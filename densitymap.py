@@ -1,9 +1,11 @@
+import rasterio
 import georef2
 import numpy as np
 import pyexiv2
 import os
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, box, Point
+from affine import Affine
 
 # with open("./all_detections.txt", "w") as f:
 #     for coor in all_detections_coor:
@@ -13,10 +15,13 @@ from shapely.geometry import Polygon, box, Point
 
 
 # setting up paths
-ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
-IMG_DIR = "DJI_202508081433_021_PineIslandbog5H3m5x3photo"
-LABEL_DIR = "output"
+# ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
+# IMG_DIR = "DJI_202508081433_021_PineIslandbog5H3m5x3photo"
+# LABEL_DIR = "output"
 
+ORIGIN_PATH = "DJI_202507011146_136_PineIslandbog9H3m3x3photo/DJI_20250701114908_0001_D_Waypoint1.JPG"
+IMG_DIR = "DJI_202507011146_136_PineIslandbog9H3m3x3photo"
+LABEL_DIR = "output"
 # setting up constants
 SIDE_LENGTH_METERS = 3  # grid square side length in meters
 
@@ -45,11 +50,15 @@ detections = {} # image_id -> list of (x,y) detections in relative coordinate sy
 for img, label in zip(img_list, label_list):
     img_path = os.path.join(IMG_DIR, img)
     img_id = int(img.split("Waypoint")[1].split(".")[0])
+    print(img_id)
     label_path = os.path.join(LABEL_DIR, label)
     mapped_list = georef2.georef(ORIGIN_PATH, img_path, label_path)
     all_detections_coor.extend(mapped_list)
     detections[img_id] = mapped_list
 all_detections_coor = np.array(all_detections_coor)
+
+print("detections: ", detections.keys())
+
 
 # Write to text file
 with open("all_detections.txt", "w") as f:
@@ -74,6 +83,7 @@ for image_f in img_list:
 x_min, x_max = np.min(all_detections_coor[:,0]), np.max(all_detections_coor[:,0])
 y_min, y_max = np.min(all_detections_coor[:,1]), np.max(all_detections_coor[:,1])
 
+
 # number of cells in x and y direction
 num_x_cells = int(np.ceil((x_max - x_min) / SIDE_LENGTH_METERS))
 print(f"Number of cells in x direction: {num_x_cells}")
@@ -86,9 +96,9 @@ density_grid = np.zeros((num_y_cells, num_x_cells), dtype=int) # a matrix of dim
 point_cell_map = {} # (x,y) point -> image to avoid doulbe counting
 
 # create grid lines
-y_lines = np.linspace(start=y_min, stop=y_max, num=num_y_cells+1)
+y_lines = np.linspace(start=y_max, stop=y_min, num=num_y_cells+1)
 
-x_lines = np.linspace(start=x_max, stop=x_min, num=num_x_cells+1)
+x_lines = np.linspace(start=x_min, stop=x_max, num=num_x_cells+1)
 
 
 # populate density grid
@@ -150,7 +160,7 @@ for y_idx in range(num_y_cells):
                     most_count = count
                     chosen_image = img_id
         
-        density_grid[y_idx, x_idx] = most_count
+        density_grid[y_idx, x_idx] = most_count / SIDE_LENGTH_METERS**2  # density per square meter
         if chosen_image is not None:
             point_cell_map[(x_idx, y_idx)] = chosen_image
             # map cell center to GPS
@@ -170,3 +180,36 @@ with open("gps_density_dict.txt", "w") as f:
     for k, v in gps_map.items():
         f.write(f"{k}: {v}\n" + "\n")
     f.close()
+
+
+# 1. Get the Yaw from the origin image
+# Use the same logic as your georef2 to stay consistent
+dji_yaw = float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.FlightYawDegree'])
+
+# 2. Conversion factors (Meters to Degrees)
+deg_per_m_lat = 1 / 111320
+deg_per_m_lon = 1 / (111320 * np.cos(np.radians(lat0)))
+
+metric_transform = (
+    Affine.rotation(-dji_yaw) * Affine.translation(x_min, y_max) * Affine.scale(SIDE_LENGTH_METERS, -SIDE_LENGTH_METERS)
+)
+
+final_transform = (
+    Affine.translation(lon0, lat0) * Affine.scale(deg_per_m_lon, deg_per_m_lat) * metric_transform
+)
+
+# 5. Save the GeoTIFF
+with rasterio.open(
+    "density_map.tif",
+    "w",
+    driver="GTiff",
+    height=density_grid.shape[0],
+    width=density_grid.shape[1],
+    count=1,
+    dtype='float32',
+    crs="EPSG:4326",
+    transform=final_transform,
+) as dst:
+    dst.write(density_grid.astype('float32'), 1)
+
+print("Density GeoTIFF created: density_map.tif")
