@@ -1,29 +1,21 @@
-import rasterio
 import georef2
 import numpy as np
 import pyexiv2
 import os
-import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, box, Point
-from affine import Affine
-
-# with open("./all_detections.txt", "w") as f:
-#     for coor in all_detections_coor:
-#         to_write = str(coor[0]) + ", " + str(coor[1]) + "\n"
-#         f.write(to_write)
-#     f.close()
-
+import csv
 
 # setting up paths
-# ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
-# IMG_DIR = "DJI_202508081433_021_PineIslandbog5H3m5x3photo"
-# LABEL_DIR = "output"
-
-ORIGIN_PATH = "DJI_202507011146_136_PineIslandbog9H3m3x3photo/DJI_20250701114908_0001_D_Waypoint1.JPG"
-IMG_DIR = "DJI_202507011146_136_PineIslandbog9H3m3x3photo"
+ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
+IMG_DIR = "DJI_202508081433_021_PineIslandbog5H3m5x3photo"
 LABEL_DIR = "output"
+
+# ORIGIN_PATH = "DJI_202507011146_136_PineIslandbog9H3m3x3photo/DJI_20250701114908_0001_D_Waypoint1.JPG"
+# IMG_DIR = "DJI_202507011146_136_PineIslandbog9H3m3x3photo"
+# LABEL_DIR = "output"
 # setting up constants
-SIDE_LENGTH_METERS = 3  # grid square side length in meters
+SIDE_LENGTH_METERS = 1 # grid square side length in meters
+yaw = np.radians(float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.FlightYawDegree']))
 
 # populate map
 all_detections_coor = []
@@ -47,17 +39,20 @@ print("______________________")
 # y direction is drone's forward direction
 # x direction is always orthogonal to y direction to the right
 detections = {} # image_id -> list of (x,y) detections in relative coordinate system
+img_fname_map = {} # image_id -> image file name
+
+
 for img, label in zip(img_list, label_list):
     img_path = os.path.join(IMG_DIR, img)
     img_id = int(img.split("Waypoint")[1].split(".")[0])
-    print(img_id)
+    img_fname_map[img_id] = img
     label_path = os.path.join(LABEL_DIR, label)
     mapped_list = georef2.georef(ORIGIN_PATH, img_path, label_path)
     all_detections_coor.extend(mapped_list)
     detections[img_id] = mapped_list
 all_detections_coor = np.array(all_detections_coor)
 
-print("detections: ", detections.keys())
+
 
 
 # Write to text file
@@ -101,7 +96,7 @@ y_lines = np.linspace(start=y_max, stop=y_min, num=num_y_cells+1)
 x_lines = np.linspace(start=x_min, stop=x_max, num=num_x_cells+1)
 
 
-# populate density grid
+print("Populating density grid...")
 # helper functions
 def cell_center(x_idx, y_idx):
     x = (x_lines[x_idx] + x_lines[x_idx + 1]) / 2
@@ -115,30 +110,31 @@ def read_gps(image_path):
         lon = float(meta['Xmp.drone-dji.GpsLongitude'])
     return lat, lon
 
-def meters_to_gps(lat_origin, lon_origin, dx, dy):
+def meters_to_gps(lat_origin, lon_origin, dx, dy, yaw_angle):
     """
     Approximates new GPS coordinates given an origin and metric offsets (dx, dy).
     Uses a flat-earth approximation suitable for small drone survey areas.
     """
     R_EARTH = 6378137.0  # Earth radius in meters
     
+    dx_rotated = dx * np.cos(-yaw_angle) - dy * np.sin(-yaw_angle)
+    dy_rotated = dx * np.sin(-yaw_angle) + dy * np.cos(-yaw_angle)
     # Calculate change in latitude
-    d_lat = (dy / R_EARTH) * (180 / np.pi)
+    d_lat = (dy_rotated / R_EARTH) * (180 / np.pi)
     new_lat = lat_origin + d_lat
     
     # Calculate change in longitude (adjusted for latitude)
-    d_lon = (dx / (R_EARTH * np.cos(np.radians(lat_origin)))) * (180 / np.pi)
+    d_lon = (dx_rotated  / (R_EARTH * np.cos(np.radians(lat_origin)))) * (180 / np.pi)
     new_lon = lon_origin + d_lon
     
     return (new_lat, new_lon)
 
 # origin GPS coor
 lat0, lon0 = read_gps(ORIGIN_PATH)
-print(f"Origin GPS: lat {lat0}, lon {lon0}")
 
 
 gps_map = {}
-lat0, lon0 = read_gps(ORIGIN_PATH)
+
 
 
 for y_idx in range(num_y_cells):
@@ -160,14 +156,15 @@ for y_idx in range(num_y_cells):
                     most_count = count
                     chosen_image = img_id
         
-        density_grid[y_idx, x_idx] = most_count / SIDE_LENGTH_METERS**2  # density per square meter
+        normalized_val = most_count / SIDE_LENGTH_METERS**2  # density per square meter
+        density_grid[y_idx, x_idx] = normalized_val
         if chosen_image is not None:
             point_cell_map[(x_idx, y_idx)] = chosen_image
             # map cell center to GPS
             cell_center_x = (left + right) / 2
             cell_center_y = (down + up) / 2
-            gps = meters_to_gps(lat0, lon0, cell_center_x, cell_center_y)
-            gps_map[gps] = most_count
+            gps = meters_to_gps(lat0, lon0, cell_center_x, cell_center_y, yaw)
+            gps_map[gps] = (normalized_val, img_fname_map[chosen_image])
         
 
 # output
@@ -175,6 +172,7 @@ print("Total images with detections:", len(image_bounds))
 print("Total detection files loaded:", len(detections))
 print("Nonzero grid cells:", np.count_nonzero(density_grid))
 print("Max density in a cell: ", np.max(density_grid))
+print(f"Origin GPS: lat {lat0}, lon {lon0}")
 
 with open("gps_density_dict.txt", "w") as f:
     for k, v in gps_map.items():
@@ -182,34 +180,17 @@ with open("gps_density_dict.txt", "w") as f:
     f.close()
 
 
-# 1. Get the Yaw from the origin image
-# Use the same logic as your georef2 to stay consistent
-dji_yaw = float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.FlightYawDegree'])
 
-# 2. Conversion factors (Meters to Degrees)
-deg_per_m_lat = 1 / 111320
-deg_per_m_lon = 1 / (111320 * np.cos(np.radians(lat0)))
+# output file name
+csv_output = "gps_density_results.csv"
 
-metric_transform = (
-    Affine.rotation(-dji_yaw) * Affine.translation(x_min, y_max) * Affine.scale(SIDE_LENGTH_METERS, -SIDE_LENGTH_METERS)
-)
+with open(csv_output, "w", newline='') as f:
+    writer = csv.writer(f)
 
-final_transform = (
-    Affine.translation(lon0, lat0) * Affine.scale(deg_per_m_lon, deg_per_m_lat) * metric_transform
-)
+    writer.writerow(["latitude", "longitude", "density", "image_id"])
+    
+    for (lat, lon), (density, image_fname) in gps_map.items():
+        writer.writerow([lat, lon, density, image_fname])
 
-# 5. Save the GeoTIFF
-with rasterio.open(
-    "density_map.tif",
-    "w",
-    driver="GTiff",
-    height=density_grid.shape[0],
-    width=density_grid.shape[1],
-    count=1,
-    dtype='float32',
-    crs="EPSG:4326",
-    transform=final_transform,
-) as dst:
-    dst.write(density_grid.astype('float32'), 1)
-
-print("Density GeoTIFF created: density_map.tif")
+print(f"Data saved for QGIS in {csv_output}")
+print("Done.")
