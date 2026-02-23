@@ -122,7 +122,6 @@ for image_f in images:
   images_list.append(image_f)
 
 if(os.path.exists(parent_directory + "output/")):
-  #shutil.rmtree(parent_directory + "output/")
   print("output file already exists. Using the same output folder")
 else:
     os.mkdir(parent_directory + "output/")
