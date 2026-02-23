@@ -192,6 +192,8 @@ def georef(origin_path, img_path, label_path):
     yaw = np.radians(90 - float(pyexiv2.Image(origin_path).read_xmp()['Xmp.drone-dji.FlightYawDegree']))
     drone_coor = get_drone_coor(LAT1, LON1, lat2, lon2, yaw)
     mapped_coor = map_to_drone(detections_coor, drone_coor)
+    pyexiv2.Image(img_path).close()
+    pyexiv2.Image(origin_path).close()
     return mapped_coor
 
 

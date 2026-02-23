@@ -2,8 +2,10 @@ import georef2
 import numpy as np
 import pyexiv2
 import os
-from shapely.geometry import Polygon, box, Point
+from shapely import Polygon, box
+from shapely import STRtree
 import csv
+from concurrent.futures import ProcessPoolExecutor
 
 # setting up paths
 ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
@@ -13,102 +15,46 @@ LABEL_DIR = "output"
 # ORIGIN_PATH = "DJI_202507011146_136_PineIslandbog9H3m3x3photo/DJI_20250701114908_0001_D_Waypoint1.JPG"
 # IMG_DIR = "DJI_202507011146_136_PineIslandbog9H3m3x3photo"
 # LABEL_DIR = "output"
+
+
+
 # setting up constants
 SIDE_LENGTH_METERS = 1 # grid square side length in meters
 yaw = np.radians(float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.FlightYawDegree']))
+origin_gps = (float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.GpsLatitude']), float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.GpsLongitude']))
 
-# populate map
-all_detections_coor = []
-
-
-label_list = [] # list of label file paths
-img_list = [] # list of image file paths
 
 img_list = sorted([f for f in os.listdir(IMG_DIR) if f.lower().endswith(".jpg")])[1:]
 label_list = sorted([f for f in os.listdir(LABEL_DIR) if f.lower().endswith(".txt")])
 
-print("______________________")
-print("Image list: ")
-print(img_list)
-print("\n")
-print("Label list: ")
-print(label_list)
-print("______________________")
 
 # mapping detections to relative coordinate with drone's first image as basis
 # y direction is drone's forward direction
 # x direction is always orthogonal to y direction to the right
 detections = {} # image_id -> list of (x,y) detections in relative coordinate system
 img_fname_map = {} # image_id -> image file name
+image_bounds = {}
+all_detections_coor = [] # list of all (x,y) detections in relative coordinate system for all images, used to determine grid size and bounds
+
+gps_map = {} # (lat, lon) -> (density, image_fname) mapping for each grid cell center
 
 
-for img, label in zip(img_list, label_list):
+def process_img(img, label):
     img_path = os.path.join(IMG_DIR, img)
     img_id = int(img.split("Waypoint")[1].split(".")[0])
-    img_fname_map[img_id] = img
     label_path = os.path.join(LABEL_DIR, label)
+    img_id = int(img.split("Waypoint")[1].split(".")[0])
+
     mapped_list = georef2.georef(ORIGIN_PATH, img_path, label_path)
-    all_detections_coor.extend(mapped_list)
-    detections[img_id] = mapped_list
-all_detections_coor = np.array(all_detections_coor)
+    polygon = Polygon(georef2.get_image_corners(ORIGIN_PATH, img_path))
 
-
-
-
-# Write to text file
-with open("all_detections.txt", "w") as f:
-    for x, y in all_detections_coor:
-        f.write(f"{x:.3f} {y:.3f}\n")
-# finished mapping detections to relative coordinate with drone's first image as basis
-
-
-# Image corners
-corners_dict = {}  # image_id -> list of corners in (x,y) relative to origin image -- 2d numpy array
-image_bounds = {}
-for image_f in img_list:
-    image_path = os.path.join(IMG_DIR, image_f)
-    img_id = int(image_f.split("Waypoint")[1].split(".")[0])
-    corners = georef2.get_image_corners(ORIGIN_PATH, image_path)
-    corners_dict[img_id] = corners
-    # print(corners)
-    image_bounds[img_id] = Polygon(corners)
-
-    
-# create grids
-x_min, x_max = np.min(all_detections_coor[:,0]), np.max(all_detections_coor[:,0])
-y_min, y_max = np.min(all_detections_coor[:,1]), np.max(all_detections_coor[:,1])
-
-
-# number of cells in x and y direction
-num_x_cells = int(np.ceil((x_max - x_min) / SIDE_LENGTH_METERS))
-print(f"Number of cells in x direction: {num_x_cells}")
-num_y_cells = int(np.ceil((y_max - y_min) / SIDE_LENGTH_METERS))
-print(f"Number of cells in y direction: {num_y_cells}")
-
-
-# create array of grid
-density_grid = np.zeros((num_y_cells, num_x_cells), dtype=int) # a matrix of dimension num_y_cells x num_x_cells initialized to 0 
-point_cell_map = {} # (x,y) point -> image to avoid doulbe counting
-
-# create grid lines
-y_lines = np.linspace(start=y_max, stop=y_min, num=num_y_cells+1)
-
-x_lines = np.linspace(start=x_min, stop=x_max, num=num_x_cells+1)
-
-
-print("Populating density grid...")
-# helper functions
-def cell_center(x_idx, y_idx):
-    x = (x_lines[x_idx] + x_lines[x_idx + 1]) / 2
-    y = (y_lines[y_idx] + y_lines[y_idx + 1]) / 2
-    return x, y
-
-def read_gps(image_path):
-    with pyexiv2.Image(image_path) as img:
-        meta = img.read_xmp()
-        lat = float(meta['Xmp.drone-dji.GpsLatitude'])
-        lon = float(meta['Xmp.drone-dji.GpsLongitude'])
-    return lat, lon
+    return {
+        "img": img,
+        "img_id": img_id,
+        "img_path": img_path,
+        "mapped_list": mapped_list,
+        "polygon": polygon
+    }
 
 def meters_to_gps(lat_origin, lon_origin, dx, dy, yaw_angle):
     """
@@ -129,68 +75,110 @@ def meters_to_gps(lat_origin, lon_origin, dx, dy, yaw_angle):
     
     return (new_lat, new_lon)
 
-# origin GPS coor
-lat0, lon0 = read_gps(ORIGIN_PATH)
 
 
-gps_map = {}
+if __name__ == "__main__":
+    # multithreading for image processing
+    with ProcessPoolExecutor() as executor:
+        results = list(executor.map(process_img, img_list, label_list))
+
+    for result in results:
+        all_detections_coor.extend(result["mapped_list"])
+        detections[result["img_id"]] = result["mapped_list"]
+        image_bounds[result["img_id"]] = result["polygon"]
+        img_fname_map[result["img_id"]] = result["img"]
+        
+    all_detections_coor = np.array(all_detections_coor) # convert list to numpy array for easier processing later
+    detections = {img_id: np.array(weed) for img_id, weed in detections.items()} # convert lists to numpy arrays for easier processing later
+
+    id_list = np.sort(np.array(list(image_bounds.keys())))
+    img_bounds_ordered = np.array([image_bounds[img_id] for img_id in id_list])
+    tree = STRtree(img_bounds_ordered)
+    if tree is not None:
+        print("Successfully built spatial index for image bounds.")
+    else: 
+        print("Failed to build spatial index for image bounds.")
+        raise Exception("Spatial index construction failed.")
+    
+
+    print("Finished processing images and mapping detections to relative coordinates with origin of drone's first image. \n")
+
+    # create grids
+    x_min, x_max = np.min(all_detections_coor[:,0]), np.max(all_detections_coor[:,0])
+    y_min, y_max = np.min(all_detections_coor[:,1]), np.max(all_detections_coor[:,1])
+
+    # number of cells in x and y direction
+    # y is the drone's forward direction, x is the right direction orthogonal to y
+    num_x_cells = int(np.ceil((x_max - x_min) / SIDE_LENGTH_METERS))
+    print(f"Number of cells in x direction: {num_x_cells}")
+    num_y_cells = int(np.ceil((y_max - y_min) / SIDE_LENGTH_METERS))
+    print(f"Number of cells in y direction: {num_y_cells} \n")
+
+    # create cells
+    density_grid = np.zeros((num_y_cells, num_x_cells), dtype=int) # a matrix of dimension num_y_cells x num_x_cells initialized to 0 
+
+    # create grid lines
+    y_lines = np.linspace(start=y_min, stop=y_max, num=num_y_cells+1)
+    x_lines = np.linspace(start=x_min, stop=x_max, num=num_x_cells+1)
 
 
+    print("Density calculation started...")
+    # density calculation
+    for y_idx in range(num_y_cells):
+        for x_idx in range(num_x_cells):
+            up, down = y_lines[y_idx+1], y_lines[y_idx]
+            left, right = x_lines[x_idx], x_lines[x_idx+1]
+            cell_bounds = box(left, down, right, up)
 
-for y_idx in range(num_y_cells):
-    for x_idx in range(num_x_cells):
-        up = y_lines[y_idx+1]
-        down = y_lines[y_idx]
-        left = x_lines[x_idx]
-        right = x_lines[x_idx+1]
-        cell_bounds = box(left, down, right, up)
+            possible_bounds = tree.query(cell_bounds) # 1d array of indices of possible intersecting polygons
 
-        most_count = 0
-        chosen_image = None
-        for img_id, img_bounds in image_bounds.items():
-            if img_bounds.intersects(cell_bounds):
+            # debug purpose
+            # if (len(possible_bounds) != 0):
+            #     print(possible_bounds)
+
+            most_count = 0
+            chosen_img = None
+            for idx in possible_bounds:
+                img_id = id_list[idx]
                 points = detections[img_id]
-                count = sum(1 for p in points if cell_bounds.contains(Point(p[0], p[1])))
 
+                is_in_x = (points[:,0] >= left) & (points[:,0] <= right)
+                is_in_y = (points[:,1] >= down) & (points[:,1] <= up)
+
+                count = np.count_nonzero(is_in_x & is_in_y)
+
+            
                 if count > most_count:
                     most_count = count
-                    chosen_image = img_id
-        
-        normalized_val = most_count / SIDE_LENGTH_METERS**2  # density per square meter
-        density_grid[y_idx, x_idx] = normalized_val
-        if chosen_image is not None:
-            point_cell_map[(x_idx, y_idx)] = chosen_image
-            # map cell center to GPS
-            cell_center_x = (left + right) / 2
-            cell_center_y = (down + up) / 2
-            gps = meters_to_gps(lat0, lon0, cell_center_x, cell_center_y, yaw)
-            gps_map[gps] = (normalized_val, img_fname_map[chosen_image])
-        
+                    chosen_img = img_id
+            
+            if chosen_img is not None:
+                density = most_count / SIDE_LENGTH_METERS**2  # density per square meter
+                density_grid[y_idx, x_idx] = density
 
-# output
-print("Total images with detections:", len(image_bounds))
-print("Total detection files loaded:", len(detections))
-print("Nonzero grid cells:", np.count_nonzero(density_grid))
-print("Max density in a cell: ", np.max(density_grid))
-print(f"Origin GPS: lat {lat0}, lon {lon0}")
+                # map cell center to GPS
+                cell_center_x = (left + right) / 2
+                cell_center_y = (down + up) / 2
+                gps = meters_to_gps(origin_gps[0], origin_gps[1], cell_center_x, cell_center_y, yaw)
+                gps_map[gps] = (density, img_fname_map[chosen_img])
 
-with open("gps_density_dict.txt", "w") as f:
-    for k, v in gps_map.items():
-        f.write(f"{k}: {v}\n" + "\n")
-    f.close()
+    # output
+    print("Total images with detections:", len(image_bounds))
+    print("Total detection files loaded:", len(detections))
+    print("Nonzero grid cells:", np.count_nonzero(density_grid))
+    print("Max density in a cell: ", np.max(density_grid))
+    print(f"Origin GPS: lat {origin_gps[0]}, lon {origin_gps[1]}\n")
 
+    # output file name
+    csv_output = "gps_density_results.csv"
 
+    with open(csv_output, "w", newline='') as f:
+        writer = csv.writer(f)
 
-# output file name
-csv_output = "gps_density_results.csv"
+        writer.writerow(["latitude", "longitude", "density", "image_id"])
 
-with open(csv_output, "w", newline='') as f:
-    writer = csv.writer(f)
+        for (lat, lon), (density, image_fname) in gps_map.items():
+            writer.writerow([lat, lon, density, image_fname])
 
-    writer.writerow(["latitude", "longitude", "density", "image_id"])
-    
-    for (lat, lon), (density, image_fname) in gps_map.items():
-        writer.writerow([lat, lon, density, image_fname])
-
-print(f"Data saved for QGIS in {csv_output}")
-print("Done.")
+    print(f"Data saved for QGIS in {csv_output}")
+    print("Done.")
