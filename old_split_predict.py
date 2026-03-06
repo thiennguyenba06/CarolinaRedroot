@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 
 
+# find a way to multiprocess this
 
 def divideImage(parent_directory, image_path, output_dir, img_dim=640, iou_thresh=0.5, conf_thresh=0.35):
 	image_f = Image.open(image_path)
@@ -61,9 +62,14 @@ def divideImage(parent_directory, image_path, output_dir, img_dim=640, iou_thres
 	im.close()
 
 
-parent_directory = (ans + "/" if (ans := input("Enter full path to parent directory: ").strip()) != "-1" else "./")
-image_folder_dir = input("Enter relative path to image folder: ").strip() + "/"
-weight_path = (ans if (ans := input("Enter relative path to weight file: ").strip()) != "-1" else "best.pt")
+# parent_directory = (ans + "/" if (ans := input("Enter full path to parent directory: ").strip()) != "-1" else "./")
+# image_folder_dir = input("Enter relative path to image folder: ").strip() + "/"
+# weight_path = (ans if (ans := input("Enter relative path to weight file: ").strip()) != "-1" else "best.pt")
+
+# for timing purposes, hardcoding the paths for now
+parent_directory = "./"
+image_folder_dir = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
+weight_path = "best.pt"
 
 model = ultralytics.YOLO(os.path.join(parent_directory, weight_path))
 images = os.listdir(os.path.join(parent_directory, image_folder_dir))
@@ -75,23 +81,25 @@ for file in images:
 
 
 # Logic to handle output_dir
+# use regex to check if output dir exists, if exists, find max number and add 1 then create output{num} 
+# if not, create output dir
 pattern = re.compile(r"^output(\d*)$")
 counter = 1
 for directory in os.listdir(parent_directory):
-	print(directory)
 	if os.path.isdir(os.path.join(parent_directory, directory)):
 		match = pattern.match(directory)
 		if match:
 			counter = max(counter, int(match.group(1) if match.group(1) != '' else 0)) + 1
 			
 output_dir = f"output{counter}/" if counter > 1 else "output/"
-print(f"Output will be saved in: {output_dir}")
+print(f"Output will be saved in: {output_dir}\n")
 os.mkdir(os.path.join(parent_directory, output_dir))
 
 
 
 
 
+print("executing...")
 for image in images_list:
 	image_path = os.path.join(parent_directory, image_folder_dir, image)
 	divideImage(parent_directory, image_path, output_dir, img_dim=640, iou_thresh=0.5, conf_thresh=0.35)

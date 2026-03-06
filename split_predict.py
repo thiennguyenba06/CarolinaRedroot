@@ -1,131 +1,143 @@
-# Ba Thien Nguyen Notes
-# fix minor error in path assignment
-# for directory path copy absolute path and add / at the end
-# for image folder name copy relative path and add / at the end
-# for weight path copy relative path
-# image folder and weight path are then concatenated to the directory path
-
-
-# parameters
-# angle at which the camera is tilted is "GimbalPitchDegree" in image xmp data
-
-import ultralytics
 import os
-import shutil
-import cv2
 import numpy as np
-from PIL import Image
-from pathlib import Path
+import cv2
+import ultralytics
+import re
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
-def divideImage(parent_directory, image_path, img_dim=640, iou_thresh=0.5, conf_thresh=0.35):
-  image_f = Image.open(image_path)
-  image_f = cv2.cvtColor(np.array(image_f), cv2.COLOR_RGB2BGR)
-  im = Image.open(image_path)
-  img_type = str(im.format)
-  if img_type == "MPO":
-    img_type = "JPG"
-  x, y = im.size
 
-  #ceiling division
-  num_of_row = -(x // -img_dim)
-  x_padding = img_dim - (x // num_of_row)
-  num_of_col = -(y // -img_dim)
-  y_padding = img_dim - (y // num_of_col)
-  for i in range(0, x, img_dim):
-    for j in range(0, y, img_dim):
-      #adds 10 pixel padding to the images
-      start_i = (i - x_padding * (i / img_dim))
-      start_j = (j - y_padding * (j / img_dim))
-      low_x =  start_i / x
-      low_y =  start_j/ y
-      high_x = (start_i + img_dim) / x
-      high_y = (start_j + img_dim) / y
-      
-      #overlap the last row/column images
-      if (i + img_dim) > x:
-        high_x = 1
-        low_x = 1 - img_dim / x
-        start_i = x - img_dim
-      if (j + img_dim) > y:
-        high_y = 1
-        low_y = 1 - img_dim / y
-        start_j = y - img_dim
-        
-      newIm = im.crop((start_i, start_j, start_i + img_dim, start_j + img_dim))
-      
-      result = model.predict(source = newIm, save=False, imgsz=img_dim, line_width=3, show_labels=False, show_conf=False, max_det = 3000, iou=iou_thresh, conf=conf_thresh)
-      if (result[0].obb) != None:
-        boxes = result[0].obb.xyxyxyxy.tolist()
-      else:
-        boxes = []
-      w, h = x, y
-      with open(parent_directory + "output/" + image[:-4] + ".txt", "a") as f:
-        for box in boxes:
-          line = f"0 {(box[0][0] + start_i)/w} {(box[0][1] + start_j)/h} {(box[1][0] + start_i)/w} {(box[1][1] + start_j)/h} {(box[2][0] + start_i)/w} {(box[2][1] + start_j)/h} {(box[3][0] + start_i)/w} {(box[3][1] + start_j)/h}"
-          print(line, file = f)
-          pts = [[box[0][0] + start_i,box[0][1] + start_j], [box[1][0] + start_i,box[1][1] + start_j], [box[2][0] + start_i,box[2][1] + start_j], [box[3][0] + start_i,box[3][1] + start_j]]
-          cv2.polylines(image_f, np.int32([pts]), True, (0,0,255), 1)
-  cv2.imwrite(parent_directory + "output/" + image, image_f)
+def divideImageImproved(image_name, parent_directory, image_folder_dir, weight_path, output_dir, img_dim, iou_thresh, conf_thresh, batchsize):
+    image_path = os.path.join(parent_directory, image_folder_dir, image_name)
+    model = ultralytics.YOLO(os.path.join(parent_directory, weight_path))
+    base = os.path.basename(image_path)
+    output_name = str(base).split(".")[0] + ".txt"
 
-  im.close()
+    img = cv2.imread(image_path) # 3d array
+    if img is None:
+        print("Not a valid path")
+        print(f"Path: {image_path}")
+        return
+    
+    # y: vertical, x: horizontal
+    y, x = img.shape[:2]
+
+    image_f = img.copy()
+
+    num_cols = - (x // -img_dim)
+    x_overlap = img_dim - (x // num_cols)
+
+    num_rows = - (y // -img_dim)
+    y_overlap = img_dim - (y // num_rows)
+    
+    tiles = []
+    offsets = []
+
+    for i in range(0, x, img_dim):
+        for j in range(0, y, img_dim):
+            col_idx = i // img_dim
+            row_idx = j // img_dim
+
+
+            start_x = i - int(x_overlap * col_idx) # top left of current tile
+            start_y = j - int(y_overlap * row_idx) # top left of current tile
+            print(f"Calculated start_x: {start_x}, start_y: {start_y}")
+            tile = img[start_y : start_y + img_dim, start_x : start_x + img_dim]
+            tiles.append(tile)
+            offsets.append((start_x, start_y)) 
 
 
 
-dataset_path = "./" #default path
-weight_path = "./best.pt"
-image_folder = "images/"
+    # finished creating tiles and stored offset
 
-print("split_predict script")
-# print("Enter full path to the images folder or enter -1 to use default path using / [ex)C:/users/Duwon/download/Dataset1/images/]: ", end=" ")
-print("Enter full path to parent_directory ")
-answer = input()
-if(answer == "-1"):
-    print(f"path: {dataset_path}")
-else:
-    dataset_path = answer + "/"
 
-print("Enter relative image folder or enter -1 to use default path using / [ex)images/]: ", end=" ")
-answer = input()
-if(answer == "-1"):
-    print(f"path: {image_folder}")
-else:
-    image_folder = answer + "/"
+    # run_prediction on tiles
+    results = model.predict(source = tiles, batch=batchsize, save=False, imgsz=img_dim, line_width=3, 
+                            show_labels=False, show_conf=False, max_det = 3000, 
+                            iou=iou_thresh, conf=conf_thresh)
 
-print("Enter relative path to the weight file or enter -1 to use default path[ex) C:/Users/Duwon/Downloads/CRData/best.pt]: ", end=" ")
-answer = input()
-if(answer == "-1"):
-    print(f"path: {weight_path}")
-else:
-    weight_path = answer
+    with open(os.path.join(parent_directory, output_dir, output_name), "w") as f:
+        for result, (start_x, start_y) in zip(results, offsets):
+            if result.obb is not None:
+                boxes = result.obb.xyxyxyxy.tolist()
+                
+                for box in boxes:
+                    # Map local coordinates to global
+                    global_box = [[pt[0] + start_x, pt[1] + start_y] for pt in box]
+                    
+                    # Normalize for YOLO txt format
+                    norm_box = [[pt[0] / x, pt[1] / y] for pt in global_box]
+                    
+                    # Format and write
+                    coords_str = " ".join([f"{pt[0]} {pt[1]}" for pt in norm_box])
+                    f.write(f"0 {coords_str}\n")
+                    
+                    # Draw on the original image copy
+                    pts = np.int32([global_box])
+                    cv2.polylines(image_f, pts, True, (0, 0, 255), 1)
+    cv2.imwrite(os.path.join(parent_directory, output_dir, base), image_f)
 
-print("Enter the iou threshhold to use [ex) 0.5]: ", end=" ")
-# iou_thresh = float(input())
-iou_thresh = 0.5
 
-print("Enter the confidence threshhold to use [ex) 0.35]: ", end=" ")
-# conf_thresh = float(input())
-conf_thresh = 0.35
 
-#Change directory to dataset directory
-parent_directory = dataset_path
-print("parent directory is: ", parent_directory)
+if __name__ == "__main__":
+    # parent_directory = (ans + "/" if (ans := input("Enter full path to parent directory: ").strip()) != "-1" else "./")
+    # image_folder_dir = input("Enter relative path to image folder: ").strip() + "/"
+    # weight_path = (ans if (ans := input("Enter relative path to weight file: ").strip()) != "-1" else "best.pt") 
 
-model = ultralytics.YOLO(parent_directory + weight_path) 
-print("images path: " + parent_directory + image_folder)
-images = os.listdir(parent_directory + image_folder)
-images_list = []
+    # for timing purposes, hardcoding the paths for now
+    parent_directory = "./"
+    image_folder_dir = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
+    weight_path = "best.pt"
+    
+    # model = ultralytics.YOLO(os.path.join(parent_directory, weight_path))
+    images = os.listdir(os.path.join(parent_directory, image_folder_dir))
+    images_list = []
+    
+    for file in images:
+       if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.mpo')):
+           images_list.append(file)
+    
+    
+    # Logic to handle output_dir
+    # use regex to check if output dir exists, if exists, find max number and add 1 then create output{num} 
+    # if not, create output dir
+    pattern = re.compile(r"^output(\d*)$")
+    counter = 1
+    for directory in os.listdir(parent_directory):
+       if os.path.isdir(os.path.join(parent_directory, directory)):
+           match = pattern.match(directory)
+           if match:
+               counter = max(counter, int(match.group(1) if match.group(1) != '' else 0)) + 1
+               
+    output_dir = f"output{counter}/" if counter > 1 else "output/"
+    print(f"Output will be saved in: {output_dir}\n")
+    os.mkdir(os.path.join(parent_directory, output_dir))
 
-for image_f in images:
-  print(image_f)
-  if image_f == ".ipynb_checkpoints" or image_f.endswith(".DS_Store"):
-    continue
-  images_list.append(image_f)
+    process = partial(divideImageImproved, 
+                      parent_directory=parent_directory,
+                      image_folder_dir=image_folder_dir,
+                      weight_path=weight_path, 
+                      output_dir=output_dir, 
+                      img_dim=640, 
+                      iou_thresh=0.5,
+                      conf_thresh=0.35,
+                      batchsize=8)
 
-if(os.path.exists(parent_directory + "output/")):
-  print("output file already exists. Using the same output folder")
-else:
-    os.mkdir(parent_directory + "output/")
+    # print("executing...")
+    # for img in images_list:
+    #     divideImageImproved(image_name=img,
+    #                         parent_directory=parent_directory,
+    #                         image_folder_dir=image_folder_dir,
+    #                         weight_path=weight_path,
+    #                         output_dir=output_dir,
+    #                         img_dim=640,
+    #                         iou_thresh=0.5,
+    #                         conf_thresh=0.35,
+    #                         batchsize=8)
+    
 
-for image in images_list:
-  image_path = parent_directory + image_folder + image
-  divideImage(parent_directory, image_path, 640, iou_thresh, conf_thresh)
+    print("executing...")
+    with ProcessPoolExecutor() as executor:
+        executor.map(process, images_list) 
+
+    print("Done!")
