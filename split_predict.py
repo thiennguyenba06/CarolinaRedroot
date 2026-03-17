@@ -41,7 +41,6 @@ def divideImageImproved(image_name, parent_directory, image_folder_dir, weight_p
 
             start_x = i - int(x_overlap * col_idx) # top left of current tile
             start_y = j - int(y_overlap * row_idx) # top left of current tile
-            print(f"Calculated start_x: {start_x}, start_y: {start_y}")
             tile = img[start_y : start_y + img_dim, start_x : start_x + img_dim]
             tiles.append(tile)
             offsets.append((start_x, start_y)) 

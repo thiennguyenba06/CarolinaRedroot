@@ -10,7 +10,13 @@ from concurrent.futures import ProcessPoolExecutor
 # setting up paths
 ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
 IMG_DIR = "DJI_202508081433_021_PineIslandbog5H3m5x3photo"
-LABEL_DIR = "output"
+LABEL_DIR = "output2"
+
+SHIFT_VECTOR = np.array([-1.68998787e-05, 6.04827686e-06]) # subject to change
+THRESHOLD = 20 # subject to change
+# SHIFT_VECTOR = np.array([0, 0])
+
+CSV_OUTPUT = "gps_density_results_shifted.csv"
 
 # ORIGIN_PATH = "DJI_202507011146_136_PineIslandbog9H3m3x3photo/DJI_20250701114908_0001_D_Waypoint1.JPG"
 # IMG_DIR = "DJI_202507011146_136_PineIslandbog9H3m3x3photo"
@@ -20,7 +26,7 @@ LABEL_DIR = "output"
 
 # setting up constants
 SIDE_LENGTH_METERS = 1 # grid square side length in meters
-yaw = np.radians(float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.FlightYawDegree']))
+yaw = np.radians(90 - float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.FlightYawDegree']))
 origin_gps = (float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.GpsLatitude']), float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.GpsLongitude']))
 
 
@@ -58,22 +64,23 @@ def process_img(img, label):
 
 def meters_to_gps(lat_origin, lon_origin, dx, dy, yaw_angle):
     """
-    Approximates new GPS coordinates given an origin and metric offsets (dx, dy).
-    Uses a flat-earth approximation suitable for small drone survey areas.
+    dx: offset to the drone's right (meters)
+    dy: offset to the drone's forward (meters)
+    yaw_angle: mathematical angle (radians, 0=East, CCW)
     """
-    R_EARTH = 6378137.0  # Earth radius in meters
+    R_EARTH = 6378137.0  # Earth radius
     
-    dx_rotated = dx * np.cos(-yaw_angle) - dy * np.sin(-yaw_angle)
-    dy_rotated = dx * np.sin(-yaw_angle) + dy * np.cos(-yaw_angle)
-    # Calculate change in latitude
-    d_lat = (dy_rotated / R_EARTH) * (180 / np.pi)
-    new_lat = lat_origin + d_lat
+    # Standard rotation to align Body Frame (x=right, y=forward) 
+    # with Inertial Frame (East, North)
+    # Using the yaw_angle where 90 deg is North
+    east_meter  = dx * np.sin(yaw_angle) + dy * np.cos(yaw_angle)
+    north_meter = -dx * np.cos(yaw_angle) + dy * np.sin(yaw_angle)
+
+    # Calculate change in GPS coordinates
+    d_lat = (north_meter / R_EARTH) * (180 / np.pi)
+    d_lon = (east_meter / (R_EARTH * np.cos(np.radians(lat_origin)))) * (180 / np.pi)
     
-    # Calculate change in longitude (adjusted for latitude)
-    d_lon = (dx_rotated  / (R_EARTH * np.cos(np.radians(lat_origin)))) * (180 / np.pi)
-    new_lon = lon_origin + d_lon
-    
-    return (new_lat, new_lon)
+    return (lat_origin + d_lat, lon_origin + d_lon)
 
 
 
@@ -132,10 +139,6 @@ if __name__ == "__main__":
 
             possible_bounds = tree.query(cell_bounds) # 1d array of indices of possible intersecting polygons
 
-            # debug purpose
-            # if (len(possible_bounds) != 0):
-            #     print(possible_bounds)
-
             most_count = 0
             chosen_img = None
             for idx in possible_bounds:
@@ -159,8 +162,10 @@ if __name__ == "__main__":
                 # map cell center to GPS
                 cell_center_x = (left + right) / 2
                 cell_center_y = (down + up) / 2
+                center_xy = [cell_center_x, cell_center_y]
+                print(f"Cell center in meters: x {cell_center_x}, y {cell_center_y}")
                 gps = meters_to_gps(origin_gps[0], origin_gps[1], cell_center_x, cell_center_y, yaw)
-                gps_map[gps] = (density, img_fname_map[chosen_img])
+                gps_map[gps] = (density, img_fname_map[chosen_img], center_xy)
 
     # output
     print("Total images with detections:", len(image_bounds))
@@ -168,17 +173,22 @@ if __name__ == "__main__":
     print("Nonzero grid cells:", np.count_nonzero(density_grid))
     print("Max density in a cell: ", np.max(density_grid))
     print(f"Origin GPS: lat {origin_gps[0]}, lon {origin_gps[1]}\n")
-
+    
     # output file name
-    csv_output = "gps_density_results.csv"
 
-    with open(csv_output, "w", newline='') as f:
-        writer = csv.writer(f)
 
-        writer.writerow(["latitude", "longitude", "density", "image_id"])
+    with open(CSV_OUTPUT, "w", newline='') as f1, open("spray_location", "w", newline='') as f2:
+        writer1 = csv.writer(f1)
+        writer2 = csv.writer(2)
 
-        for (lat, lon), (density, image_fname) in gps_map.items():
-            writer.writerow([lat, lon, density, image_fname])
+        writer1.writerow(["latitude", "longitude", "density", "image_id", "center_x", "center_y"])
+        writer2.writerow(["latitude", "longitude", "density", "image_id"])
 
-    print(f"Data saved for QGIS in {csv_output}")
+        for (lat, lon), (density, image_fname, center_xy) in gps_map.items(): 
+            writer1.writerow([lat + SHIFT_VECTOR[0], lon + SHIFT_VECTOR[1], density, image_fname, center_xy[0], center_xy[1]])
+            if density > THRESHOLD:
+                writer2.writerow([lat + SHIFT_VECTOR[0], lon + SHIFT_VECTOR[1], density, image_fname])
+
+
+    print(f"Data saved for QGIS in {CSV_OUTPUT}")
     print("Done.")
