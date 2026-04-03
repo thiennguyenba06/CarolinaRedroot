@@ -1,8 +1,5 @@
-import os
-import numpy as np
-import cv2
-import ultralytics
-import re
+import os, numpy as np, cv2, ultralytics, re
+import nms_module
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
@@ -44,38 +41,45 @@ def divideImageImproved(image_name, parent_directory, image_folder_dir, weight_p
             tile = img[start_y : start_y + img_dim, start_x : start_x + img_dim]
             tiles.append(tile)
             offsets.append((start_x, start_y)) 
-
-
-
     # finished creating tiles and stored offset
-
 
     # run_prediction on tiles
     results = model.predict(source = tiles, batch=batchsize, save=False, imgsz=img_dim, line_width=3, 
                             show_labels=False, show_conf=False, max_det = 3000, 
                             iou=iou_thresh, conf=conf_thresh)
 
-    with open(os.path.join(parent_directory, output_dir, output_name), "w") as f:
+    with open(os.path.join(parent_directory, output_dir, output_name), "w") as f: 
+        detections = []
+        global_conf = []
+
         for result, (start_x, start_y) in zip(results, offsets):
             if result.obb is not None:
-                boxes = result.obb.xyxyxyxy.tolist()
-                
-                for box in boxes:
-                    # Map local coordinates to global
+                boxes = result.obb.xyxyxyxy.tolist() 
+                conf_scores = result.obb.conf.tolist()
+                for box, conf in zip(boxes, conf_scores):
+                    # map local coordinates to global
                     global_box = [[pt[0] + start_x, pt[1] + start_y] for pt in box]
-                    
-                    # Normalize for YOLO txt format
-                    norm_box = [[pt[0] / x, pt[1] / y] for pt in global_box]
-                    
-                    # Format and write
-                    coords_str = " ".join([f"{pt[0]} {pt[1]}" for pt in norm_box])
-                    f.write(f"0 {coords_str}\n")
-                    
-                    # Draw on the original image copy
-                    pts = np.int32([global_box])
-                    cv2.polylines(image_f, pts, True, (0, 0, 255), 1)
-    cv2.imwrite(os.path.join(parent_directory, output_dir, base), image_f)
+                    # normalize
+                    # norm_box = [[pt[0] / x, pt[1] / y] for pt in global_box]
+                    detections.append(global_box)
+                    global_conf.append(conf)
+        
+        # perform nms
+        data_abstract = np.dtype([('box', np.float32, (4, 2)), ('conf', np.float32)]) # store global box coordinates and corresponding confidence scores
+        global_boxes = np.zeros(len(detections), dtype=data_abstract) # store global box coordinates and corresponding confidence scores
+        for i, (box, conf) in enumerate(zip(detections, global_conf)):
+            global_boxes[i] = (box, conf)
+        
+        nms_boxes = nms_module.nms(boxes=global_boxes, conf_threshold=conf_thresh, iou_threshold=iou_thresh)
+        for box in nms_boxes:
+            norm_box = [[pt[0] / x, pt[1] / y] for pt in box]
+            coords_str = " ".join([f"{pt[0]} {pt[1]}" for pt in norm_box])
+            f.write(f"0 {coords_str}\n")
 
+            # draw
+            pts = np.int32([box])
+            cv2.polylines(image_f, pts, True, (0, 0, 255), 2)
+    cv2.imwrite(os.path.join(parent_directory, output_dir, base), image_f)
 
 
 if __name__ == "__main__":
@@ -122,7 +126,7 @@ if __name__ == "__main__":
                       conf_thresh=0.35,
                       batchsize=8)
 
-    # print("executing...")
+    print("executing...")
     # for img in images_list:
     #     divideImageImproved(image_name=img,
     #                         parent_directory=parent_directory,
@@ -135,7 +139,6 @@ if __name__ == "__main__":
     #                         batchsize=8)
     
 
-    print("executing...")
     with ProcessPoolExecutor() as executor:
         executor.map(process, images_list) 
 
