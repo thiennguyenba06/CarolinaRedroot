@@ -87,7 +87,7 @@ if __name__ == "__main__":
     # image_folder_dir = input("Enter relative path to image folder: ").strip() + "/"
     # weight_path = (ans if (ans := input("Enter relative path to weight file: ").strip()) != "-1" else "best.pt") 
 
-    # for timing purposes, hardcoding the paths for now
+    # for timing purposes
     parent_directory = "./"
     image_folder_dir = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/"
     weight_path = "best.pt"

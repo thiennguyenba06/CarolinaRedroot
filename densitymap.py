@@ -1,24 +1,18 @@
-import georef2
-import numpy as np
-import pyexiv2
-import os
+import georef2, shift_vector_module
+import numpy as np, pyexiv2, os, csv
 from shapely import Polygon, box, Point, STRtree, distance
-import csv
 from concurrent.futures import ProcessPoolExecutor
 
 # setting up paths
 ORIGIN_PATH = "DJI_202508081433_021_PineIslandbog5H3m5x3photo/DJI_20250808143604_0001_D_Waypoint1.JPG"
 IMG_DIR = "DJI_202508081433_021_PineIslandbog5H3m5x3photo"
-LABEL_DIR = "output"
+LABEL_DIR = "output2"
 
-SHIFT_VECTOR = np.array([-1.68998787e-05, 6.04827686e-06]) # subject to change
+# SHIFT_VECTOR = np.array([-1.68998787e-05, 6.04827686e-06]) # subject to change
+SHIFT_VECTOR = shift_vector_module.calculate_shift_vector(PARENT_DIR="./", corner_folder_dir="4_corner_bog5")
 THRESHOLD = 20 # subject to change
-# SHIFT_VECTOR = np.array([0, 0])
 
 CSV_OUTPUT = "density_by_gps.csv"
-
-
-
 
 # setting up constants
 SIDE_LENGTH_METERS = 1 # grid square side length in meters
@@ -27,7 +21,7 @@ yaw = np.radians(90 - float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji
 origin_gps = (float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.GpsLatitude']), float(pyexiv2.Image(ORIGIN_PATH).read_xmp()['Xmp.drone-dji.GpsLongitude']))
 
 
-img_list = sorted([f for f in os.listdir(IMG_DIR) if f.lower().endswith(".jpg")])[1:]
+img_list = sorted([f for f in os.listdir(IMG_DIR) if f.lower().endswith(".jpg")])
 label_list = sorted([f for f in os.listdir(LABEL_DIR) if f.lower().endswith(".txt")])
 
 
@@ -42,14 +36,13 @@ all_detections_coor = [] # list of all (x,y) detections in relative coordinate s
 
 gps_map = {} # (lat, lon) -> (density, image_fname) mapping for each grid cell center
 
-
+# helper methods
 def process_img(img, label):
     img_path = os.path.join(IMG_DIR, img)
     img_id = int(img.split("Waypoint")[1].split(".")[0])
     label_path = os.path.join(LABEL_DIR, label)
     mapped_list = georef2.georef(ORIGIN_PATH, img_path, label_path)
     polygon = Polygon(georef2.get_image_corners(ORIGIN_PATH, img_path))
-
 
     return {
         "img": img,
@@ -64,9 +57,7 @@ def meters_to_gps(lat_origin, lon_origin, dx, dy, yaw_angle):
     dx: offset to the drone's right (meters)
     dy: offset to the drone's forward (meters)
     yaw_angle: mathematical angle (radians, 0=East, CCW)
-    """
-    
-    
+    """ 
     # Standard rotation to align Body Frame (x=right, y=forward) 
     # with Inertial Frame (East, North)
     # Using the yaw_angle where 90 deg is North
@@ -88,7 +79,7 @@ def find_displacement(drone_gps, point_gps, yaw):
     """
     drone_lat, drone_lon = drone_gps
     point_lat, point_lon = point_gps
-    point_lat, point_lon = point_lat + SHIFT_VECTOR[0], point_lon + SHIFT_VECTOR[1] 
+    point_lat, point_lon = point_lat, point_lon 
     # Calculate delta gps
     d_lat = point_lat - drone_lat
     d_lon = point_lon - drone_lon
@@ -103,8 +94,20 @@ def find_displacement(drone_gps, point_gps, yaw):
 
     return (dx, dy)
 
+def get_lower_half_centroid(polygon):
+    minx, miny, maxx, maxy = polygon.bounds
+    lower_half = box(minx, miny, maxx, (miny + maxy) / 2)
+    lower_half_polygon = polygon.intersection(lower_half)
+    if lower_half_polygon.is_empty:
+        return None
+    return lower_half_polygon.centroid
+
+
+
+# main
 if __name__ == "__main__":
     # multithreading for image processing
+    print("Processing annotated images...")
     with ProcessPoolExecutor() as executor:
         results = list(executor.map(process_img, img_list, label_list))
 
@@ -156,23 +159,26 @@ if __name__ == "__main__":
             left, right = x_lines[x_idx], x_lines[x_idx+1]
             cell_bounds = box(left, down, right, up)
             cell_center_x, cell_center_y = (left + right) / 2, (down + up) / 2
-            cell_center = Point(cell_center_x, cell_center_y)
  
             possible_bounds = tree.query(cell_bounds) # 1d array of possible intersecting polygons (in any region)
 
             # choosing best image
-            min_distance = 100
+            min_distance = float("inf")
             chosen_img = None
             for idx in possible_bounds:
                 img_id = id_list[idx]
                 polygon = image_bounds[img_id]
-                distance_to_centroid = distance(cell_center, polygon.centroid)
-                if distance_to_centroid < min_distance:
+                distance_to_centroid = abs(distance(cell_bounds.centroid, get_lower_half_centroid(polygon)))
+                if distance_to_centroid <= min_distance:
                     chosen_img = img_id
-                    min_distance = distance_to_centroid
+                    min_distance = distance_to_centroid 
                             
             if chosen_img is not None:
-                points = detections[img_id]
+                points = detections[chosen_img]
+                # print(f"{img_id}: {np.ndim(points)}")
+                if points.ndim != 2:
+                    print(f"Warning: No detections found for image {img_id}. Skipping this cell.")
+                    continue
                 is_in_x = (points[:,0] >= left) & (points[:,0] <= right)
                 is_in_y = (points[:,1] >= down) & (points[:,1] <= up)
                 count = np.count_nonzero(is_in_x & is_in_y)
@@ -185,15 +191,17 @@ if __name__ == "__main__":
                 drone_gps = (float(xmp_data['Xmp.drone-dji.GpsLatitude']), float(xmp_data['Xmp.drone-dji.GpsLongitude']))
                 displacement = find_displacement(drone_gps=drone_gps, point_gps=gps, yaw=yaw)
                 gps_map[gps] = (density, img_fname_map[chosen_img], displacement)
+    print("Finished density map calculation\n")
 
     # output
+    print("Run summary:")
     print("Total images with detections:", len(image_bounds))
     print("Total detection files loaded:", len(detections))
     print("Nonzero grid cells:", np.count_nonzero(density_grid))
     print("Max density in a cell: ", np.max(density_grid))
-    print(f"Origin GPS: lat {origin_gps[0]}, lon {origin_gps[1]}\n")
-    
-    # output file name
+    print(f"Origin GPS: lat {origin_gps[0]}, lon {origin_gps[1]}")
+    print(f"Shift vector: lat {SHIFT_VECTOR[0]}, lon {SHIFT_VECTOR[1]}\n")
+
 
 
     with open(CSV_OUTPUT, "w", newline='') as f1, open("spray_location.csv", "w", newline='') as f2:
@@ -207,7 +215,6 @@ if __name__ == "__main__":
             writer1.writerow([lat + SHIFT_VECTOR[0], lon + SHIFT_VECTOR[1], density, image_fname, center_xy[0], center_xy[1]])
             if density > THRESHOLD:
                 writer2.writerow([lat + SHIFT_VECTOR[0], lon + SHIFT_VECTOR[1], density, image_fname])
-
 
     print(f"Data saved for QGIS in {CSV_OUTPUT}")
     print("Done.")

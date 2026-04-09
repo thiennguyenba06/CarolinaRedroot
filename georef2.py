@@ -42,7 +42,6 @@ def find_angle_x(x, y, img_width):
     SO = img_width / (2*np.tan(SENSOR_FOV_HORIZONTAL/2))
     Oy = np.sqrt(np.square(SO) + np.square(y))
     angle_x = np.arctan(x/Oy)
-    # print(angle_x)
     return angle_x
 
 def find_point_projection(point, img_width, img_height, drone_height, pitch):
@@ -90,14 +89,14 @@ def get_detections_coor(img_path, detections_path):
     img = pyexiv2.Image(img_path)
     yaw = np.radians(90 - float(img.read_xmp()['Xmp.drone-dji.FlightYawDegree']))
     pitch = np.radians(float(img.read_xmp()['Xmp.drone-dji.GimbalPitchDegree']))
-    print("pitch:", pitch)
+    # print("pitch:", pitch)
     altitude = float(img.read_xmp()['Xmp.drone-dji.RelativeAltitude']) + 1
-    print("altitude:", altitude)
-    print("yaw:", yaw) 
+    # print("altitude:", altitude)
+    # print("yaw:", yaw) 
     img_width = float(img.read_exif()['Exif.Photo.PixelXDimension'])
-    print("img width: ", img_width)
+    # print("img width: ", img_width)
     img_height = float(img.read_exif()['Exif.Photo.PixelYDimension'])
-    print("img height: ", img_height)
+    # print("img height: ", img_height)
     coor_list = []
     with open(detections_path) as file:
         lines = file.read().splitlines()
@@ -106,10 +105,8 @@ def get_detections_coor(img_path, detections_path):
             boxlist = list(line.split(" "))[1:]
             box = [(float(boxlist[0]), float(boxlist[1])), (float(boxlist[2]), float(boxlist[3])),
                    (float(boxlist[4]), float(boxlist[5])), (float(boxlist[6]), float(boxlist[7]))]
-            # print(box[0][0])
             coor = find_center(box, img_width, img_height)
             x, y = find_point_projection(coor, img_width, img_height, altitude, pitch)
-            # print(coor)
             coor_list.append([x, y])
     return np.array(coor_list)
 
@@ -162,9 +159,7 @@ def get_image_corners(origin_path, img_path):
     altitude = float(img.read_xmp()['Xmp.drone-dji.RelativeAltitude']) + 1  
     pitch = np.radians(float(img.read_xmp()['Xmp.drone-dji.GimbalPitchDegree']))    
     img_width = float(img.read_exif()['Exif.Photo.PixelXDimension'])
-    print("img width: ", img_width)
     img_height = float(img.read_exif()['Exif.Photo.PixelYDimension'])
-    print("img height: ", img_height)
 
     # Top-left
     x, y = find_point_projection((-img_width/2,img_height/2), img_width, img_height, altitude, pitch)

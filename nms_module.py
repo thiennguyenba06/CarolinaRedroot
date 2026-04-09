@@ -19,8 +19,8 @@ def nms(boxes, conf_threshold, iou_threshold):
     """
 
     # discard box with conf < threshold
-    # mask = boxes['conf'] >= conf_threshold
-    # boxes = boxes[mask]
+    mask = boxes['conf'] >= conf_threshold
+    boxes = boxes[mask]
     # sort by conf
     boxes.sort(order='conf')  # ascending order
     boxes = boxes[::-1]  # reverse 
